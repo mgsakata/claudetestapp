@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Snowflakes — Claude Test Site{% endblock %}
+
+{% block content %}
+<section class="section">
+  <div class="container has-text-centered">
+    <h1 class="title is-2 mb-6">Snowflakes</h1>
+    <div style="display:inline-block; border-radius:12px; overflow:hidden; box-shadow: 0 8px 40px rgba(10,20,60,0.3);">
+      <canvas id="gl" width="800" height="500" style="display:block;"></canvas>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl');
+  if (!gl) { canvas.insertAdjacentHTML('afterend', '<p>WebGL not supported.</p>'); }
+
+  const VS = `
+    attribute vec2 a_pos;
+    attribute float a_size;
+    void main() {
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+      gl_PointSize = a_size;
+    }
+  `;
+
+  const FS = `
+    precision mediump float;
+    void main() {
+      vec2 c = gl_PointCoord - 0.5;
+      float d = length(c);
+      float core  = smoothstep(0.22, 0.08, d);
+      float flake = smoothstep(0.50, 0.30, d);
+      float alpha = flake * 0.55 + core * 0.45;
+      gl_FragColor = vec4(0.85 + core * 0.15, 0.92 + core * 0.08, 1.0, alpha);
+    }
+  `;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const a_pos  = gl.getAttribLocation(prog, 'a_pos');
+  const a_size = gl.getAttribLocation(prog, 'a_size');
+
+  const COUNT = 220;
+  const W = canvas.width, H = canvas.height;
+  function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
+
+  const flakes = Array.from({ length: COUNT }, () => ({
+    x:       rand(-1, 1),
+    y:       rand(-1, 1),
+    vy:      rand(0.0006, 0.0022),
+    vx:      rand(-0.0003, 0.0003),
+    size:    rand(3, 11),
+    phase:   rand(0, Math.PI * 2),
+    sway:    rand(0.00015, 0.00045),
+    swayFreq: rand(0.0005, 0.0015),
+  }));
+
+  const posData  = new Float32Array(COUNT * 2);
+  const sizeData = new Float32Array(COUNT);
+  const posBuf   = gl.createBuffer();
+  const sizeBuf  = gl.createBuffer();
+  const aspect   = W / H;
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  let last = null;
+  function frame(ts) {
+    if (last === null) last = ts;
+    const dt = Math.min(ts - last, 50);
+    last = ts;
+
+    gl.clearColor(0.04, 0.07, 0.18, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.viewport(0, 0, W, H);
+
+    for (let i = 0; i < COUNT; i++) {
+      const f = flakes[i];
+      f.y -= f.vy * dt;
+      f.x += f.vx * dt + Math.sin(ts * f.swayFreq + f.phase) * f.sway * dt / aspect;
+      if (f.y < -1.05) { f.y = 1.05; f.x = rand(-1, 1); }
+      if (f.x >  1.05) f.x = -1.05;
+      if (f.x < -1.05) f.x =  1.05;
+      posData[i * 2]     = f.x;
+      posData[i * 2 + 1] = f.y;
+      sizeData[i]        = f.size;
+    }
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(a_pos);
+    gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(a_size);
+    gl.vertexAttribPointer(a_size, 1, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.POINTS, 0, COUNT);
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+</script>
+{% endblock %}
