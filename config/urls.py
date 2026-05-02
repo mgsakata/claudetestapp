@@ -21,4 +21,5 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('home.urls')),
     path('snowflakes/', include('snowflakes.urls')),
+    path('godzilla/', include('godzilla.urls')),
 ]

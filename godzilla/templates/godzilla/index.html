@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Godzilla — Claude Test Site{% endblock %}
+
+{% block content %}
+<section class="section">
+  <div class="container has-text-centered">
+    <h1 class="title is-2 mb-6">Godzilla</h1>
+    <div style="display:inline-block; border-radius:12px; overflow:hidden; box-shadow: 0 8px 40px rgba(10,20,60,0.3);">
+      <canvas id="gl" width="800" height="500" style="display:block;"></canvas>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl');
+const W = canvas.width, H = canvas.height;
+
+const VS = `
+  attribute vec2 a_pos;
+  void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const FS = `
+  precision highp float;
+  uniform float u_time;
+  uniform vec2  u_res;
+
+  #define LOOP 7.0
+
+  float smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0);
+    return mix(b, a, h) - k*h*(1.0-h);
+  }
+
+  float sdCircle(vec2 p, float r) { return length(p) - r; }
+
+  float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa,ba)/dot(ba,ba), 0.0, 1.0);
+    return length(pa - ba*h) - r;
+  }
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453);
+  }
+
+  // building mask using step — no branches
+  float building(vec2 p, float x0, float x1, float top) {
+    return step(x0,p.x)*step(p.x,x1)*step(0.09,p.y)*step(p.y,top);
+  }
+
+  // Godzilla body SDF (aspect-corrected space: x in [0,1.6], y in [0,1])
+  float godzilla(vec2 p) {
+    float d = sdCapsule(p, vec2(0.32,0.15), vec2(0.28,0.50), 0.115); // spine/torso
+    d = smin(d, sdCircle(p - vec2(0.36,0.32), 0.13),  0.03);          // belly
+    d = smin(d, sdCapsule(p, vec2(0.30,0.48), vec2(0.37,0.60), 0.065), 0.02); // neck
+    d = smin(d, sdCircle(p - vec2(0.43,0.69), 0.085), 0.02);           // head
+    d = smin(d, sdCapsule(p, vec2(0.45,0.67), vec2(0.57,0.634), 0.046), 0.015); // upper jaw/snout
+    d = smin(d, sdCapsule(p, vec2(0.44,0.655), vec2(0.55,0.614), 0.030), 0.01); // lower jaw
+    d = smin(d, sdCapsule(p, vec2(0.43,0.50), vec2(0.53,0.41), 0.046), 0.01);  // upper arm
+    d = smin(d, sdCapsule(p, vec2(0.53,0.41), vec2(0.57,0.33), 0.034), 0.01);  // forearm
+    d = smin(d, sdCapsule(p, vec2(0.26,0.17), vec2(0.22,0.06), 0.068), 0.02);  // left thigh
+    d = smin(d, sdCapsule(p, vec2(0.35,0.15), vec2(0.38,0.05), 0.068), 0.02);  // right thigh
+    d = smin(d, sdCapsule(p, vec2(0.22,0.06), vec2(0.17,0.024), 0.052), 0.015);// left shin
+    d = smin(d, sdCapsule(p, vec2(0.38,0.05), vec2(0.42,0.024), 0.052), 0.015);// right shin
+    d = smin(d, sdCapsule(p, vec2(0.27,0.36), vec2(0.11,0.26), 0.074), 0.02);  // tail 1
+    d = smin(d, sdCapsule(p, vec2(0.11,0.26), vec2(0.04,0.16), 0.050), 0.015); // tail 2
+    d = smin(d, sdCapsule(p, vec2(0.04,0.16), vec2(0.00,0.09), 0.030), 0.01);  // tail tip
+    return d;
+  }
+
+  // Dorsal fins — capsules projecting upward-left from spine
+  float fins(vec2 p) {
+    float d = sdCapsule(p, vec2(0.27,0.53), vec2(0.18,0.78), 0.022); // fin 1 near neck
+    d = min(d, sdCapsule(p, vec2(0.26,0.47), vec2(0.13,0.76), 0.028));// fin 2 (largest)
+    d = min(d, sdCapsule(p, vec2(0.25,0.41), vec2(0.15,0.69), 0.023));// fin 3
+    d = min(d, sdCapsule(p, vec2(0.24,0.34), vec2(0.14,0.58), 0.019));// fin 4
+    d = min(d, sdCapsule(p, vec2(0.22,0.27), vec2(0.14,0.49), 0.015));// fin 5
+    return d;
+  }
+
+  void main() {
+    // aspect-corrected coords: x in [0,1.6], y in [0,1], y=0 at bottom
+    vec2 p  = vec2(gl_FragCoord.x, gl_FragCoord.y) / u_res.y;
+    vec2 uv = gl_FragCoord.xy / u_res; // plain 0-1 for gradients
+
+    float t = mod(u_time, LOOP);
+
+    // ---- animation phases ----
+    float fadeIn    = smoothstep(0.0,  0.6,  t);
+    float fadeOut   = 1.0 - smoothstep(6.4, 7.0, t);
+    float finGlow   = smoothstep(0.5,  1.5,  t) * (1.0 - smoothstep(5.8, 6.4, t));
+    float roarShake = smoothstep(0.9,  1.3,  t) * (1.0 - smoothstep(2.0, 2.4, t));
+    float preCharge = smoothstep(1.6,  2.2,  t) * (1.0 - smoothstep(2.3, 2.5, t));
+    float beamVis   = smoothstep(2.3,  2.6,  t) * (1.0 - smoothstep(5.2, 5.6, t));
+    float beamProg  = smoothstep(2.3,  4.2,  t);
+    float explAmt   = smoothstep(4.0,  4.6,  t) * (1.0 - smoothstep(5.6, 6.2, t));
+    float flashAmt  = smoothstep(4.0,  4.2,  t) * smoothstep(4.6, 4.2, t);
+
+    // screen shake on roar
+    float shk = roarShake * 0.005 * sin(u_time * 90.0);
+    p += vec2(shk, shk * 0.6);
+
+    // ---- sky ----
+    vec3 col = mix(vec3(0.02,0.02,0.09), vec3(0.06,0.04,0.16), uv.y);
+
+    // stars
+    vec2 sv = uv * vec2(95.0, 65.0);
+    float sh = hash(floor(sv));
+    if (sh > 0.964) {
+      float tw = 0.5 + 0.5*sin(u_time*2.2 + sh*40.0);
+      col += vec3(0.7,0.88,1.0) * smoothstep(0.32,0.0,length(fract(sv)-0.5)) * tw * 0.85;
+    }
+
+    // ---- ground ----
+    col = mix(col, vec3(0.06,0.07,0.12), step(p.y, 0.09));
+
+    // ---- buildings ----
+    float bm = 0.0;
+    bm = max(bm, building(p, 0.74,0.80, 0.40));
+    bm = max(bm, building(p, 0.85,0.91, 0.56));
+    bm = max(bm, building(p, 0.96,1.02, 0.37));
+    bm = max(bm, building(p, 1.07,1.13, 0.50));
+    bm = max(bm, building(p, 1.20,1.27, 0.64));
+    bm = max(bm, building(p, 1.31,1.40, 0.70)); // explosion target
+    bm = max(bm, building(p, 1.45,1.52, 0.33));
+
+    if (bm > 0.0) {
+      vec3 bldCol = vec3(0.05,0.06,0.12);
+      vec2 wuv = fract(p * vec2(18.0,11.0));
+      float win = step(0.18,wuv.x)*step(wuv.x,0.82)*step(0.18,wuv.y)*step(wuv.y,0.82);
+      float lit = step(0.42, hash(floor(p*vec2(18.0,11.0))));
+      bldCol += vec3(0.22,0.19,0.07) * win * lit;
+      col = mix(col, bldCol, bm);
+    }
+
+    // ---- beam geometry ----
+    float beamY      = 0.632;
+    float beamStartX = 0.575;
+    float beamEndX   = beamStartX + beamProg * 0.80;
+    float explX      = 1.355;
+    float explY      = beamY;
+
+    // beam illuminates scene
+    if (beamVis > 0.0) {
+      float dy = abs(p.y - beamY);
+      float inBeam = step(beamStartX, p.x) * step(p.x, beamEndX);
+      col += vec3(0.0,0.4,0.7) * exp(-dy*7.0) * inBeam * beamVis * 0.55;
+      // tint buildings cyan
+      col += vec3(0.0,0.25,0.45) * bm * exp(-dy*5.5) * beamVis * step(beamStartX, p.x) * 0.5;
+    }
+
+    // ---- explosion ----
+    if (explAmt > 0.0) {
+      vec2 ep   = p - vec2(explX, explY);
+      float ed  = length(ep);
+      float maxR = 0.24 * explAmt;
+
+      float ring = smoothstep(maxR, maxR*0.55, ed) * smoothstep(0.0, maxR*0.45, ed);
+      float fill = smoothstep(maxR*0.55, 0.0, ed);
+      float core = smoothstep(maxR*0.22, 0.0, ed);
+
+      vec3 ec = mix(vec3(0.95,0.18,0.0), vec3(1.0,0.88,0.1), fill);
+      ec = mix(ec, vec3(1.0,1.0,0.95), core);
+      col = mix(col, ec, (ring + fill) * explAmt);
+
+      // debris blobs
+      for (int i = 0; i < 9; i++) {
+        float fi    = float(i);
+        float angle = fi * 0.698 + 0.4;
+        float rad   = (0.06 + fi*0.018) * explAmt;
+        vec2  dp    = ep - vec2(cos(angle)*rad, sin(angle)*rad);
+        col = mix(col, vec3(1.0,0.45,0.0), smoothstep(0.022,0.0,length(dp))*explAmt);
+      }
+
+      // radial glow
+      col += vec3(1.0,0.28,0.0) * exp(-ed*4.5) * explAmt * 0.75;
+      // screen flash
+      col += vec3(1.0,0.72,0.3) * flashAmt * 0.55;
+    }
+
+    // ---- Godzilla body ----
+    float gd = godzilla(p);
+    float fd = fins(p);
+
+    float bodyMask = smoothstep(0.006,-0.004, gd);
+    float finMask  = smoothstep(0.005,-0.003, fd) * (1.0 - bodyMask);
+
+    // subtle scale noise
+    float scl = hash(floor(p*28.0)) * 0.055;
+    vec3 bodyCol = vec3(0.09,0.12,0.10) + scl;
+    // rim light from beam
+    bodyCol += vec3(0.0,0.18,0.38) * exp(-abs(p.y - beamY)*6.0) * beamVis * step(gd, 0.02);
+
+    col = mix(col, bodyCol, bodyMask);
+
+    // ---- dorsal fin glow ----
+    float finGlowDist = max(0.0, fd);
+    col += vec3(0.0,0.85,1.0) * exp(-finGlowDist*22.0) * finGlow * 0.65;
+    col  = mix(col, vec3(0.12,1.0,1.0), finMask * finGlow * 0.75);
+
+    // ---- pre-beam charge ball at mouth ----
+    float mouthDist = length(p - vec2(beamStartX, beamY));
+    float chargeSize = 0.04 + 0.02*sin(u_time*18.0);
+    col += vec3(0.3,0.9,1.0) * smoothstep(chargeSize, 0.0, mouthDist) * preCharge;
+    col += vec3(0.0,0.5,1.0) * exp(-mouthDist*18.0) * preCharge * 0.9;
+
+    // ---- beam ray ----
+    if (beamVis > 0.0) {
+      float dy     = abs(p.y - beamY);
+      float inBeam = step(beamStartX, p.x) * step(p.x, beamEndX);
+      float flick  = 0.82 + 0.18*sin(u_time*45.0 + p.x*28.0);
+
+      float bCore  = smoothstep(0.016, 0.0,  dy);
+      float bMid   = smoothstep(0.042, 0.008, dy);
+      float bOuter = exp(-dy*20.0);
+
+      vec3 beamCol = mix(
+        mix(vec3(0.10,0.55,1.0), vec3(0.35,0.92,1.0), bMid),
+        vec3(1.0,1.0,1.0), bCore
+      );
+      float ba = clamp((bOuter*0.35 + bMid*0.5 + bCore) * inBeam * beamVis * flick, 0.0, 1.0);
+      col = mix(col, beamCol, ba);
+    }
+
+    col *= fadeIn * fadeOut;
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error('Shader error:', gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+  console.error('Link error:', gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+// Fullscreen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1,  1,-1,  -1,1,
+  -1, 1,  1,-1,   1,1,
+]), gl.STATIC_DRAW);
+
+const a_pos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(a_pos);
+gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+const u_time = gl.getUniformLocation(prog, 'u_time');
+const u_res  = gl.getUniformLocation(prog, 'u_res');
+gl.uniform2f(u_res, W, H);
+
+function frame(ts) {
+  gl.uniform1f(u_time, ts / 1000.0);
+  gl.viewport(0, 0, W, H);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+{% endblock %}
