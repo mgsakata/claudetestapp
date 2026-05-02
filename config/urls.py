@@ -22,4 +22,5 @@ urlpatterns = [
     path('', include('home.urls')),
     path('snowflakes/', include('snowflakes.urls')),
     path('godzilla/', include('godzilla.urls')),
+    path('dogs/', include('dogs.urls')),
 ]

@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'snowflakes',
     'home',
     'godzilla',
+    'dogs',
 ]
 
 MIDDLEWARE = [

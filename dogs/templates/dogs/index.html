@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}Dog Slideshow — Claude Test Site{% endblock %}
+
+{% block extra_head %}
+<style>
+  .slideshow-wrap {
+    position: relative;
+    width: 800px;
+    max-width: 100%;
+    margin: 0 auto;
+  }
+
+  .slide-frame {
+    position: relative;
+    width: 100%;
+    height: 600px;
+    background: #111;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .slide.active { opacity: 1; }
+
+  .slide img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .slide-loading { color: #aaa; font-size: 1.1rem; }
+
+  .caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 14px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.70));
+    color: #fff;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .caption a { color: #a8d8ff; text-decoration: none; }
+  .caption a:hover { text-decoration: underline; }
+
+  .nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0,0,0,0.45);
+    border: none;
+    color: #fff;
+    font-size: 1.6rem;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    transition: background 0.2s;
+  }
+  .nav-btn:hover { background: rgba(0,0,0,0.7); }
+  .nav-btn.prev { left: 12px; }
+  .nav-btn.next { right: 12px; }
+
+  .dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ccc;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+  }
+  .dot.active { background: #3273dc; transform: scale(1.3); }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .counter { color: #666; font-size: 0.9rem; min-width: 60px; text-align: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="section">
+  <div class="container has-text-centered">
+    <h1 class="title is-2 mb-2">Dog Slideshow</h1>
+    <p class="subtitle is-6 mb-6">
+      Photos from <a href="https://commons.wikimedia.org" target="_blank" rel="noopener">Wikimedia Commons</a>
+      under Creative Commons licences
+    </p>
+
+    <div class="slideshow-wrap">
+      <div class="slide-frame" id="frame">
+        <div class="slide active" id="loading-slide">
+          <span class="slide-loading">Fetching good boys…</span>
+        </div>
+        <button class="nav-btn prev" id="btn-prev" style="display:none;">&#8249;</button>
+        <button class="nav-btn next" id="btn-next" style="display:none;">&#8250;</button>
+      </div>
+
+      <div class="dots" id="dots"></div>
+
+      <div class="controls">
+        <button class="button is-small" id="btn-auto">⏸ Pause</button>
+        <span class="counter" id="counter"></span>
+        <button class="button is-small" id="btn-refresh">&#8635; New set</button>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const PHOTO_COUNT  = 30;
+const AUTO_INTERVAL = 3500;
+// Wikimedia Commons: quality images of dogs, shuffled via rngseed
+const API = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
+  action:   'query',
+  generator:'categorymembers',
+  gcmtitle: 'Category:Quality_images_of_dogs',
+  gcmtype:  'file',
+  gcmlimit: '30',
+  gcmdir:   'desc',
+  prop:     'imageinfo',
+  iiprop:   'url|extmetadata',
+  iiurlwidth:'800',
+  format:   'json',
+  origin:   '*',
+});
+
+const frame     = document.getElementById('frame');
+const dotsEl    = document.getElementById('dots');
+const counterEl = document.getElementById('counter');
+const btnPrev   = document.getElementById('btn-prev');
+const btnNext   = document.getElementById('btn-next');
+const btnAuto   = document.getElementById('btn-auto');
+const btnRefresh= document.getElementById('btn-refresh');
+
+let slides    = [];
+let current   = 0;
+let autoTimer = null;
+let isPlaying = true;
+// rotate through category pages so "New set" gives different photos
+let gcmcontinue = null;
+
+function showSlide(idx) {
+  slides[current].el.classList.remove('active');
+  dotsEl.children[current].classList.remove('active');
+  current = (idx + slides.length) % slides.length;
+  slides[current].el.classList.add('active');
+  dotsEl.children[current].classList.add('active');
+  counterEl.textContent = `${current + 1} / ${slides.length}`;
+}
+
+function buildSlides(photos) {
+  slides.forEach(s => s.el.remove());
+  dotsEl.innerHTML = '';
+  slides  = [];
+  current = 0;
+
+  photos.forEach((photo, i) => {
+    const div = document.createElement('div');
+    div.className = 'slide' + (i === 0 ? ' active' : '');
+
+    const img = document.createElement('img');
+    img.src    = photo.thumbUrl;
+    img.alt    = photo.title;
+    img.loading= 'lazy';
+    div.appendChild(img);
+
+    // attribution caption (required by CC licences)
+    const cap = document.createElement('div');
+    cap.className = 'caption';
+    cap.innerHTML =
+      `<a href="${photo.pageUrl}" target="_blank" rel="noopener">${photo.title}</a>` +
+      (photo.author  ? ` &middot; ${photo.author}`  : '') +
+      (photo.license ? ` &middot; ${photo.license}` : '');
+    div.appendChild(cap);
+
+    frame.appendChild(div);
+    slides.push({ el: div });
+
+    const dot = document.createElement('div');
+    dot.className = 'dot' + (i === 0 ? ' active' : '');
+    dot.addEventListener('click', () => { showSlide(i); resetAuto(); });
+    dotsEl.appendChild(dot);
+  });
+
+  counterEl.textContent = `1 / ${slides.length}`;
+  btnPrev.style.display = '';
+  btnNext.style.display = '';
+}
+
+async function fetchDogs() {
+  const loadingSlide = document.getElementById('loading-slide');
+  if (loadingSlide) loadingSlide.style.opacity = '1';
+
+  // randomise page offset so New set rotates results
+  const url = gcmcontinue
+    ? API + '&gcmcontinue=' + encodeURIComponent(gcmcontinue)
+    : API + '&gcmstartsortkeyprefix=' + String.fromCharCode(65 + Math.floor(Math.random() * 26));
+
+  try {
+    const res  = await fetch(url);
+    const data = await res.json();
+    gcmcontinue = data.continue?.gcmcontinue ?? null;
+
+    const pages = Object.values(data.query?.pages ?? {});
+    const photos = pages
+      .filter(p => p.imageinfo?.[0]?.thumburl)
+      .map(p => {
+        const ii   = p.imageinfo[0];
+        const meta = ii.extmetadata || {};
+        const rawAuthor = meta.Artist?.value || '';
+        // strip HTML tags from author field
+        const author = rawAuthor.replace(/<[^>]+>/g, '').trim().slice(0, 60);
+        const license = meta.LicenseShortName?.value || '';
+        return {
+          title:    p.title.replace('File:', '').replace(/\.[^.]+$/, ''),
+          thumbUrl: ii.thumburl,
+          pageUrl:  ii.descriptionurl || ii.url,
+          author,
+          license,
+        };
+      });
+
+    if (loadingSlide) loadingSlide.remove();
+
+    if (photos.length === 0) {
+      frame.innerHTML = '<div class="slide active"><span class="slide-loading">No photos found — try refreshing.</span></div>';
+      return;
+    }
+
+    buildSlides(photos);
+    startAuto();
+  } catch(e) {
+    if (loadingSlide) loadingSlide.querySelector('span').textContent = 'Failed to load photos. Try refreshing.';
+  }
+}
+
+function startAuto() {
+  clearInterval(autoTimer);
+  if (isPlaying) autoTimer = setInterval(() => showSlide(current + 1), AUTO_INTERVAL);
+}
+
+function resetAuto() {
+  clearInterval(autoTimer);
+  if (isPlaying) startAuto();
+}
+
+btnPrev.addEventListener('click', () => { showSlide(current - 1); resetAuto(); });
+btnNext.addEventListener('click', () => { showSlide(current + 1); resetAuto(); });
+
+btnAuto.addEventListener('click', () => {
+  isPlaying = !isPlaying;
+  btnAuto.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+  resetAuto();
+});
+
+btnRefresh.addEventListener('click', () => {
+  clearInterval(autoTimer);
+  isPlaying = true;
+  btnAuto.textContent = '⏸ Pause';
+
+  const loading = document.createElement('div');
+  loading.id = 'loading-slide';
+  loading.className = 'slide active';
+  loading.innerHTML = '<span class="slide-loading">Fetching good boys…</span>';
+  frame.appendChild(loading);
+
+  fetchDogs();
+});
+
+fetchDogs();
+</script>
+{% endblock %}
