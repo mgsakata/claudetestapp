@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     'home',
     'godzilla',
     'dogs',
+    'biosphere',
 ]
 
 MIDDLEWARE = [

@@ -1,0 +1,617 @@
+{% extends "base.html" %}
+
+{% block title %}Biosphere — Claude Test Site{% endblock %}
+
+{% block extra_head %}
+<style>
+  .sim-shell {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .sim-frame {
+    position: relative;
+    width: 100%;
+    background: #05070d;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+    border: 1px solid #1b2233;
+  }
+
+  #world {
+    display: block;
+    width: 100%;
+    height: auto;
+    cursor: crosshair;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .toolbar .field.speed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 0.85rem;
+  }
+  .toolbar input[type="range"] { accent-color: #48c78e; }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    justify-content: center;
+    margin-top: 6px;
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .stat {
+    background: #0d1524;
+    border: 1px solid #1b2233;
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .stat .label {
+    color: #7b8aa3;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stat .value {
+    color: #e2e8f0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 18px;
+  }
+  @media (max-width: 640px) {
+    .charts { grid-template-columns: 1fr; }
+  }
+  .chart-card {
+    background: #0d1524;
+    border: 1px solid #1b2233;
+    border-radius: 10px;
+    padding: 10px 12px 4px;
+  }
+  .chart-card h3 {
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .chart-card canvas { display: block; width: 100%; height: auto; }
+
+  .hint {
+    color: #64748b;
+    font-size: 0.78rem;
+    text-align: center;
+    margin-top: 14px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="section">
+  <div class="container sim-shell">
+    <div class="has-text-centered mb-5">
+      <h1 class="title is-2 mb-2">🧬 Biosphere</h1>
+      <p class="subtitle is-6 has-text-grey">
+        A living ecosystem. Organisms hunt, graze, compete and reproduce with
+        random mutations — watch natural selection reshape the population.
+      </p>
+    </div>
+
+    <div class="sim-frame">
+      <canvas id="world" width="1000" height="600"></canvas>
+    </div>
+
+    <div class="legend">
+      <span><span class="swatch" style="background:#48c78e;"></span>Herbivore</span>
+      <span><span class="swatch" style="background:#f14668;"></span>Carnivore</span>
+      <span><span class="swatch" style="background:#c9a227;"></span>Plant food</span>
+      <span>Ring = birth flash · Fading = starving</span>
+    </div>
+
+    <div class="toolbar">
+      <button class="button is-success is-small" id="btn-play">⏸ Pause</button>
+      <button class="button is-small" id="btn-reset">↻ Reset world</button>
+      <button class="button is-small" id="btn-feed">🌱 Bloom (add food)</button>
+      <button class="button is-small" id="btn-cataclysm">☄️ Cataclysm</button>
+      <div class="field speed">
+        <label for="speed">Sim speed</label>
+        <input type="range" id="speed" min="1" max="8" step="1" value="2">
+        <span id="speed-val">2×</span>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="label">Tick</div><div class="value" id="s-tick">0</div></div>
+      <div class="stat"><div class="label">Population</div><div class="value" id="s-pop">0</div></div>
+      <div class="stat"><div class="label">Herbivores</div><div class="value" id="s-herb">0</div></div>
+      <div class="stat"><div class="label">Carnivores</div><div class="value" id="s-carn">0</div></div>
+      <div class="stat"><div class="label">Food</div><div class="value" id="s-food">0</div></div>
+      <div class="stat"><div class="label">Generation</div><div class="value" id="s-gen">0</div></div>
+      <div class="stat"><div class="label">Avg speed</div><div class="value" id="s-speed">0</div></div>
+      <div class="stat"><div class="label">Avg size</div><div class="value" id="s-size">0</div></div>
+      <div class="stat"><div class="label">Avg sense</div><div class="value" id="s-sense">0</div></div>
+    </div>
+
+    <div class="charts">
+      <div class="chart-card">
+        <h3>Population over time</h3>
+        <canvas id="chart-pop" width="520" height="140"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Average traits over time</h3>
+        <canvas id="chart-traits" width="520" height="140"></canvas>
+      </div>
+    </div>
+
+    <p class="hint">Click anywhere in the world to sprinkle food. Life finds a way.</p>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  'use strict';
+
+  // ---------- config ----------
+  const W = 1000, H = 600;
+  const START_POP     = 60;
+  const MAX_POP       = 380;    // hard cap to keep the browser happy
+  const MAX_FOOD      = 320;
+  const FOOD_ENERGY   = 30;
+  const FOOD_SPAWN    = 1.5;    // food pellets spawned per tick (fractional accumulates)
+  const HISTORY_LEN   = 240;    // samples kept for the charts
+
+  // gene bounds
+  const GENE = {
+    speed: [0.35, 2.6],
+    size:  [3.2, 12.0],
+    sense: [24, 170],
+    diet:  [0.0, 1.0],   // 0 = pure herbivore, 1 = pure carnivore
+  };
+  const MUT_RATE = 0.14;  // chance each gene mutates on birth
+  const MUT_AMT  = 0.16;  // fraction of range a mutation can shift
+
+  // ---------- canvas ----------
+  const cv  = document.getElementById('world');
+  const ctx = cv.getContext('2d');
+
+  // ---------- helpers ----------
+  const rand  = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const lerp  = (a, b, t) => a + (b - a) * t;
+  const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+
+  // ---------- world state ----------
+  let creatures = [];
+  let food      = [];
+  let tick      = 0;
+  let maxGen    = 0;
+  let foodAccum = 0;
+  let running   = true;
+  let stepsPerFrame = 2;
+
+  // history for charts
+  const hist = { pop: [], herb: [], carn: [], speed: [], size: [], sense: [] };
+
+  // ---------- genome ----------
+  function randomGenome() {
+    return {
+      speed: rand(GENE.speed[0], GENE.speed[1]),
+      size:  rand(GENE.size[0],  GENE.size[1]),
+      sense: rand(GENE.sense[0], GENE.sense[1]),
+      diet:  Math.random() < 0.75 ? rand(0, 0.35) : rand(0.55, 1), // start mostly grazers
+    };
+  }
+
+  function mutate(g) {
+    const child = { speed: g.speed, size: g.size, sense: g.sense, diet: g.diet };
+    for (const k in GENE) {
+      if (Math.random() < MUT_RATE) {
+        const [lo, hi] = GENE[k];
+        child[k] = clamp(child[k] + rand(-1, 1) * MUT_AMT * (hi - lo), lo, hi);
+      }
+    }
+    return child;
+  }
+
+  // hue: green (herbivore) -> orange -> red (carnivore)
+  function hueFor(diet) { return lerp(140, 355, diet); }
+
+  // ---------- creature ----------
+  function makeCreature(x, y, genome, generation) {
+    const g = genome || randomGenome();
+    return {
+      x, y,
+      dir: rand(0, Math.PI * 2),
+      genome: g,
+      energy: 55 + g.size * 4,
+      age: 0,
+      gen: generation || 0,
+      birthFlash: 12,
+    };
+  }
+
+  function metabolicCost(c) {
+    const g = c.genome;
+    // bigger, faster, keener creatures burn more just existing + moving.
+    // size cost is quadratic so mass is a real liability when food is scarce —
+    // this is what stops everything evolving into identical giant blobs and
+    // keeps a body-size spread alive (which carnivores need to find prey).
+    return 0.03 + g.size * g.size * 0.0055 + g.speed * g.speed * 0.06 + g.sense * 0.0011;
+  }
+  function reproThreshold(c) { return 90 + c.genome.size * 9; }
+  function maxAge(c)         { return 900 + c.genome.size * 90; }
+
+  // ---------- population control ----------
+  function seed() {
+    creatures = [];
+    food = [];
+    tick = 0; maxGen = 0; foodAccum = 0;
+    for (const k in hist) hist[k] = [];
+    for (let i = 0; i < START_POP; i++) {
+      creatures.push(makeCreature(rand(40, W - 40), rand(40, H - 40)));
+    }
+    for (let i = 0; i < MAX_FOOD * 0.5; i++) spawnFood();
+  }
+
+  function spawnFood(x, y) {
+    if (food.length >= MAX_FOOD) return;
+    food.push({
+      x: x != null ? clamp(x, 4, W - 4) : rand(6, W - 6),
+      y: y != null ? clamp(y, 4, H - 4) : rand(6, H - 6),
+    });
+  }
+
+  // ---------- simulation step ----------
+  function step() {
+    tick++;
+
+    // grow food
+    foodAccum += FOOD_SPAWN;
+    while (foodAccum >= 1) { spawnFood(); foodAccum -= 1; }
+
+    const born = [];
+
+    for (let i = 0; i < creatures.length; i++) {
+      const c = creatures[i];
+      const g = c.genome;
+      const senseR2 = g.sense * g.sense;
+
+      // --- perception: pick a target ---
+      let target = null, targetIsPrey = false, bestD2 = senseR2;
+
+      // herbivorous drive -> nearest food
+      if (g.diet < 0.85) {
+        for (let f = 0; f < food.length; f++) {
+          const d2 = dist2(c.x, c.y, food[f].x, food[f].y);
+          if (d2 < bestD2) { bestD2 = d2; target = food[f]; targetIsPrey = false; }
+        }
+      }
+      // carnivorous drive -> nearest smaller creature (overrides food if diet is high)
+      if (g.diet > 0.35) {
+        let bestPrey2 = senseR2;
+        for (let j = 0; j < creatures.length; j++) {
+          if (j === i) continue;
+          const o = creatures[j];
+          if (o.genome.size >= g.size * 0.98) continue; // can only chase prey smaller than itself
+          const d2 = dist2(c.x, c.y, o.x, o.y);
+          if (d2 < bestPrey2) { bestPrey2 = d2; }
+          // weight prey by diet: stronger carnivores prefer meat even if food is closer
+          const weighted = d2 * (1.2 - g.diet);
+          if (weighted < bestD2 || (target === null && d2 < senseR2)) {
+            if (d2 < senseR2) { bestD2 = weighted; target = o; targetIsPrey = true; }
+          }
+        }
+      }
+
+      // --- steering ---
+      if (target) {
+        const desired = Math.atan2(target.y - c.y, target.x - c.x);
+        let da = desired - c.dir;
+        while (da >  Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        c.dir += clamp(da, -0.35, 0.35);
+      } else {
+        c.dir += rand(-0.3, 0.3); // wander
+      }
+
+      // --- movement ---
+      const sp = g.speed;
+      c.x += Math.cos(c.dir) * sp;
+      c.y += Math.sin(c.dir) * sp;
+
+      // bounce off edges
+      if (c.x < 4)      { c.x = 4;      c.dir = Math.PI - c.dir; }
+      if (c.x > W - 4)  { c.x = W - 4;  c.dir = Math.PI - c.dir; }
+      if (c.y < 4)      { c.y = 4;      c.dir = -c.dir; }
+      if (c.y > H - 4)  { c.y = H - 4;  c.dir = -c.dir; }
+
+      // --- energy drain ---
+      c.energy -= metabolicCost(c);
+      c.age++;
+      if (c.birthFlash > 0) c.birthFlash--;
+
+      // --- eating ---
+      // plants (any diet can graze, but carnivores digest them poorly)
+      const eatR = g.size + 5;
+      for (let f = food.length - 1; f >= 0; f--) {
+        if (dist2(c.x, c.y, food[f].x, food[f].y) < eatR * eatR) {
+          c.energy += FOOD_ENERGY * (1 - g.diet * 0.7);
+          food.splice(f, 1);
+          break; // one bite per tick
+        }
+      }
+      // prey (carnivorous)
+      if (targetIsPrey && target && target.energy > 0) {
+        const pr = g.size + target.genome.size;
+        if (dist2(c.x, c.y, target.x, target.y) < pr * pr * 0.5) {
+          c.energy += 24 + target.energy * 0.6;
+          target.energy = -1; // mark dead
+        }
+      }
+
+      // --- reproduction ---
+      if (c.energy >= reproThreshold(c) && creatures.length + born.length < MAX_POP) {
+        c.energy *= 0.5;
+        const childGen = c.gen + 1;
+        if (childGen > maxGen) maxGen = childGen;
+        born.push(makeCreature(
+          c.x + rand(-12, 12), c.y + rand(-12, 12),
+          mutate(g), childGen
+        ));
+      }
+    }
+
+    // add newborns
+    for (let b = 0; b < born.length; b++) creatures.push(born[b]);
+
+    // --- deaths ---
+    for (let i = creatures.length - 1; i >= 0; i--) {
+      const c = creatures[i];
+      if (c.energy <= 0 || c.age > maxAge(c)) {
+        // dead bodies fertilise a little food where they fall
+        if (Math.random() < 0.55) spawnFood(c.x, c.y);
+        creatures.splice(i, 1);
+      }
+    }
+
+    // --- rescue: if life collapses, reseed a few drifters ---
+    if (creatures.length === 0) {
+      for (let i = 0; i < 12; i++) creatures.push(makeCreature(rand(40, W - 40), rand(40, H - 40)));
+    }
+
+    sampleHistory();
+  }
+
+  // ---------- stats + history ----------
+  let statTimer = 0;
+  function sampleHistory() {
+    // sample every 4 ticks to stretch the timeline
+    if (tick % 4 !== 0) return;
+    let herb = 0, carn = 0, sp = 0, sz = 0, se = 0;
+    for (const c of creatures) {
+      if (c.genome.diet >= 0.5) carn++; else herb++;
+      sp += c.genome.speed; sz += c.genome.size; se += c.genome.sense;
+    }
+    const n = creatures.length || 1;
+    push(hist.pop,   creatures.length);
+    push(hist.herb,  herb);
+    push(hist.carn,  carn);
+    push(hist.speed, sp / n);
+    push(hist.size,  sz / n);
+    push(hist.sense, se / n);
+  }
+  function push(arr, v) { arr.push(v); if (arr.length > HISTORY_LEN) arr.shift(); }
+
+  function updateStats() {
+    let herb = 0, carn = 0, sp = 0, sz = 0, se = 0;
+    for (const c of creatures) {
+      if (c.genome.diet >= 0.5) carn++; else herb++;
+      sp += c.genome.speed; sz += c.genome.size; se += c.genome.sense;
+    }
+    const n = creatures.length || 1;
+    setText('s-tick',  tick.toLocaleString());
+    setText('s-pop',   creatures.length);
+    setText('s-herb',  herb);
+    setText('s-carn',  carn);
+    setText('s-food',  food.length);
+    setText('s-gen',   maxGen);
+    setText('s-speed', (sp / n).toFixed(2));
+    setText('s-size',  (sz / n).toFixed(1));
+    setText('s-sense', Math.round(se / n));
+  }
+  function setText(id, v) { document.getElementById(id).textContent = v; }
+
+  // ---------- rendering ----------
+  function render() {
+    // faint trail fade for a soft motion feel
+    ctx.fillStyle = 'rgba(5, 7, 13, 0.35)';
+    ctx.fillRect(0, 0, W, H);
+
+    // food
+    ctx.fillStyle = '#c9a227';
+    for (let i = 0; i < food.length; i++) {
+      ctx.beginPath();
+      ctx.arc(food[i].x, food[i].y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // creatures
+    for (let i = 0; i < creatures.length; i++) {
+      const c = creatures[i];
+      const g = c.genome;
+      const hue = hueFor(g.diet);
+      const starving = c.energy < reproThreshold(c) * 0.35;
+      const light = starving ? 32 : 55;
+      const alpha = starving ? 0.55 : 1;
+
+      // body
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${hue}, 70%, ${light}%, ${alpha})`;
+      ctx.arc(c.x, c.y, g.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // heading nub (eye) so you can see where it's going
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${hue}, 90%, 82%, ${alpha})`;
+      ctx.arc(c.x + Math.cos(c.dir) * g.size * 0.6,
+              c.y + Math.sin(c.dir) * g.size * 0.6,
+              Math.max(1.4, g.size * 0.28), 0, Math.PI * 2);
+      ctx.fill();
+
+      // birth flash ring
+      if (c.birthFlash > 0) {
+        ctx.beginPath();
+        ctx.strokeStyle = `hsla(${hue}, 90%, 75%, ${c.birthFlash / 12})`;
+        ctx.lineWidth = 2;
+        ctx.arc(c.x, c.y, g.size + 6 - c.birthFlash * 0.3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // ---------- charts ----------
+  function drawChart(id, series) {
+    const cvc = document.getElementById(id);
+    const c = cvc.getContext('2d');
+    const w = cvc.width, h = cvc.height;
+    c.clearRect(0, 0, w, h);
+
+    // grid baseline
+    c.strokeStyle = '#1b2233';
+    c.lineWidth = 1;
+    c.beginPath(); c.moveTo(0, h - 0.5); c.lineTo(w, h - 0.5); c.stroke();
+
+    let max = 1;
+    for (const s of series) for (const v of s.data) if (v > max) max = v;
+    max *= 1.1;
+
+    for (const s of series) {
+      const d = s.data;
+      if (d.length < 2) continue;
+      c.strokeStyle = s.color;
+      c.lineWidth = 1.8;
+      c.beginPath();
+      for (let i = 0; i < d.length; i++) {
+        const x = (i / (HISTORY_LEN - 1)) * w;
+        const y = h - (d[i] / max) * (h - 6) - 3;
+        i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+      }
+      c.stroke();
+    }
+  }
+
+  function drawCharts() {
+    drawChart('chart-pop', [
+      { data: hist.herb, color: '#48c78e' },
+      { data: hist.carn, color: '#f14668' },
+      { data: hist.pop,  color: '#7b8aa3' },
+    ]);
+    // normalise trait series to their gene ranges so they share one 0..1 axis
+    const norm = (arr, lo, hi) => arr.map(v => (v - lo) / (hi - lo));
+    drawChart('chart-traits', [
+      { data: norm(hist.speed, GENE.speed[0], GENE.speed[1]), color: '#3e8ed0' },
+      { data: norm(hist.size,  GENE.size[0],  GENE.size[1]),  color: '#ffe08a' },
+      { data: norm(hist.sense, GENE.sense[0], GENE.sense[1]), color: '#b86bff' },
+    ]);
+  }
+
+  // ---------- main loop ----------
+  let uiTimer = 0;
+  function frame() {
+    if (running) {
+      for (let s = 0; s < stepsPerFrame; s++) step();
+    }
+    render();
+
+    if (++uiTimer >= 4) {   // throttle DOM writes
+      uiTimer = 0;
+      updateStats();
+      drawCharts();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- controls ----------
+  const btnPlay = document.getElementById('btn-play');
+  btnPlay.addEventListener('click', () => {
+    running = !running;
+    btnPlay.textContent = running ? '⏸ Pause' : '▶ Play';
+    btnPlay.classList.toggle('is-success', running);
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    seed();
+    updateStats();
+  });
+
+  document.getElementById('btn-feed').addEventListener('click', () => {
+    for (let i = 0; i < 120; i++) spawnFood();
+  });
+
+  document.getElementById('btn-cataclysm').addEventListener('click', () => {
+    // wipe most of the population — the ultimate selection event
+    for (let i = creatures.length - 1; i >= 0; i--) {
+      if (Math.random() < 0.8) creatures.splice(i, 1);
+    }
+  });
+
+  const speed = document.getElementById('speed');
+  const speedVal = document.getElementById('speed-val');
+  speed.addEventListener('input', () => {
+    stepsPerFrame = parseInt(speed.value, 10);
+    speedVal.textContent = stepsPerFrame + '×';
+  });
+  stepsPerFrame = parseInt(speed.value, 10);
+  speedVal.textContent = stepsPerFrame + '×';
+
+  // click-to-feed (map display coords -> internal canvas coords)
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * W;
+    const y = (e.clientY - r.top) / r.height * H;
+    for (let i = 0; i < 14; i++) spawnFood(x + rand(-18, 18), y + rand(-18, 18));
+  });
+
+  // ---------- go ----------
+  seed();
+  updateStats();
+  frame();
+})();
+</script>
+{% endblock %}
