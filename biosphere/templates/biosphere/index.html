@@ -44,13 +44,41 @@
   .toolbar input[type="range"] { accent-color: #48c78e; }
 
   .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 18px;
-    justify-content: center;
-    margin-top: 6px;
+    margin-top: 12px;
     color: #94a3b8;
     font-size: 0.8rem;
+  }
+  .legend .diet {
+    max-width: 580px;
+    margin: 0 auto 12px;
+  }
+  /* gradient mirrors hueFor(): hsl(140→355) at 70% sat, ~55% light */
+  .legend .diet-bar {
+    height: 14px;
+    border-radius: 7px;
+    border: 1px solid #1b2233;
+    background: linear-gradient(90deg,
+      hsl(140,70%,50%),
+      hsl(194,70%,50%),
+      hsl(247,70%,55%),
+      hsl(301,70%,56%),
+      hsl(355,72%,57%));
+  }
+  .legend .diet-labels {
+    display: flex;
+    margin-top: 6px;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .legend .diet-labels span { flex: 1; }
+  .legend .diet-labels .mid { text-align: center; }
+  .legend .diet-labels .end { text-align: right; }
+  .legend .diet-labels b { color: #cbd5e1; font-weight: 600; }
+  .legend .keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    justify-content: center;
   }
   .legend .swatch {
     display: inline-block;
@@ -60,6 +88,15 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  .legend .combat-note {
+    max-width: 640px;
+    margin: 10px auto 0;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+  .legend .combat-note b { color: #cbd5e1; font-weight: 600; }
 
   .stats {
     display: grid;
@@ -136,10 +173,28 @@
     </div>
 
     <div class="legend">
-      <span><span class="swatch" style="background:#48c78e;"></span>Herbivore</span>
-      <span><span class="swatch" style="background:#f14668;"></span>Carnivore</span>
-      <span><span class="swatch" style="background:#c9a227;"></span>Plant food</span>
-      <span>Ring = birth flash · Fading = starving</span>
+      <div class="diet">
+        <div class="diet-bar"></div>
+        <div class="diet-labels">
+          <span><b>Herbivore</b><br>grazes plants only</span>
+          <span class="mid"><b>Omnivore</b><br>grazes &amp; hunts</span>
+          <span class="end"><b>Carnivore</b><br>hunts smaller prey</span>
+        </div>
+      </div>
+      <div class="keys">
+        <span><span class="swatch" style="background:#c9a227;"></span>Plant food</span>
+        <span>Body colour = diet (bar above)</span>
+        <span>Bigger body = older &amp; more grown</span>
+        <span>Outline = armor / defense</span>
+        <span>Nub = heading; larger = stronger attack</span>
+        <span>Faded = starving · Ring = just born</span>
+      </div>
+      <p class="combat-note">
+        Hunting is a contest: attacker's <b>attack&times;size</b> vs prey's
+        <b>defense&times;size</b> — so a fierce hunter can fell a bigger, softer
+        grazer, an armored animal shrugs off attacks, and prey flee predators
+        they can't beat.
+      </p>
     </div>
 
     <div class="toolbar">
@@ -164,6 +219,12 @@
       <div class="stat"><div class="label">Avg speed</div><div class="value" id="s-speed">0</div></div>
       <div class="stat"><div class="label">Avg size</div><div class="value" id="s-size">0</div></div>
       <div class="stat"><div class="label">Avg sense</div><div class="value" id="s-sense">0</div></div>
+      <div class="stat"><div class="label">Avg attack</div><div class="value" id="s-attack">0</div></div>
+      <div class="stat"><div class="label">Avg defense</div><div class="value" id="s-defense">0</div></div>
+      <div class="stat"><div class="label">Oldest age</div><div class="value" id="s-oldest">0</div></div>
+      <div class="stat"><div class="label">Died starving</div><div class="value" id="s-starved">0</div></div>
+      <div class="stat"><div class="label">Died of old age</div><div class="value" id="s-oldage">0</div></div>
+      <div class="stat"><div class="label">Eaten</div><div class="value" id="s-eaten">0</div></div>
     </div>
 
     <div class="charts">
@@ -193,18 +254,30 @@
   const MAX_POP       = 380;    // hard cap to keep the browser happy
   const MAX_FOOD      = 320;
   const FOOD_ENERGY   = 30;
-  const FOOD_SPAWN    = 1.5;    // food pellets spawned per tick (fractional accumulates)
+  const FOOD_SPAWN    = 1.3;    // food pellets spawned per tick (fractional accumulates)
+  const IMMIGRATE_EVERY = 170;  // a random-diet immigrant arrives this often (ticks)
   const HISTORY_LEN   = 240;    // samples kept for the charts
 
   // gene bounds
   const GENE = {
-    speed: [0.35, 2.6],
-    size:  [3.2, 12.0],
-    sense: [24, 170],
-    diet:  [0.0, 1.0],   // 0 = pure herbivore, 1 = pure carnivore
+    speed:   [0.35, 2.6],
+    size:    [3.2, 12.0],
+    sense:   [24, 170],
+    diet:    [0.0, 1.0],   // 0 = pure herbivore, 1 = pure carnivore
+    attack:  [0.2, 2.2],   // offense: multiplies combat power when hunting
+    defense: [0.2, 2.2],   // defense: armor that resists being preyed upon
   };
   const MUT_RATE = 0.14;  // chance each gene mutates on birth
   const MUT_AMT  = 0.16;  // fraction of range a mutation can shift
+
+  // growth: gene 'size' is the ADULT size; each creature is born small and
+  // grows toward it with age. Body radius, reach, cost and prey/predator
+  // eligibility all follow the CURRENT size, so juveniles are cheap but
+  // vulnerable, and only mature adults can reproduce.
+  const BIRTH_SIZE_FRAC = 0.35;  // newborns start at this fraction of adult size
+  const GROWTH_RATE     = 0.005; // fraction of remaining size gap closed per tick
+  const MATURITY_FRAC   = 0.85;  // must reach this fraction of adult size to breed
+  const GROWTH_COST     = 3.5;   // energy spent per unit of body growth
 
   // ---------- canvas ----------
   const cv  = document.getElementById('world');
@@ -221,9 +294,13 @@
   let food      = [];
   let tick      = 0;
   let maxGen    = 0;
+  let recordAge = 0;   // oldest age any organism has ever reached
   let foodAccum = 0;
   let running   = true;
   let stepsPerFrame = 2;
+
+  // cumulative death tally by cause
+  const deaths = { starved: 0, oldAge: 0, eaten: 0 };
 
   // history for charts
   const hist = { pop: [], herb: [], carn: [], speed: [], size: [], sense: [] };
@@ -231,15 +308,17 @@
   // ---------- genome ----------
   function randomGenome() {
     return {
-      speed: rand(GENE.speed[0], GENE.speed[1]),
-      size:  rand(GENE.size[0],  GENE.size[1]),
-      sense: rand(GENE.sense[0], GENE.sense[1]),
-      diet:  Math.random() < 0.75 ? rand(0, 0.35) : rand(0.55, 1), // start mostly grazers
+      speed:   rand(GENE.speed[0], GENE.speed[1]),
+      size:    rand(GENE.size[0],  GENE.size[1]),
+      sense:   rand(GENE.sense[0], GENE.sense[1]),
+      diet:    Math.random() < 0.75 ? rand(0, 0.35) : rand(0.55, 1), // start mostly grazers
+      attack:  rand(GENE.attack[0],  GENE.attack[1]),
+      defense: rand(GENE.defense[0], GENE.defense[1]),
     };
   }
 
   function mutate(g) {
-    const child = { speed: g.speed, size: g.size, sense: g.sense, diet: g.diet };
+    const child = Object.assign({}, g);   // copy every gene, then mutate some
     for (const k in GENE) {
       if (Math.random() < MUT_RATE) {
         const [lo, hi] = GENE[k];
@@ -252,14 +331,33 @@
   // hue: green (herbivore) -> orange -> red (carnivore)
   function hueFor(diet) { return lerp(140, 355, diet); }
 
+  // combat power scales offense/defense by CURRENT body size, so a small fierce
+  // hunter can still lose to a large well-armored grazer, and vice versa.
+  function attackPower(c)  { return c.genome.attack  * c.size; }
+  function defensePower(c) { return c.genome.defense * c.size; }
+
+  // Diet specialization: pure grazers and pure hunters get distinct edges that
+  // jack-of-all-trades omnivores can't match, so all three niches stay viable.
+  //  - plantEff peaks at diet 0 (best plant digestion for herbivores)
+  //  - meatEff  peaks at diet 1 (best meat digestion for carnivores)
+  //  - huntAttack gives dedicated carnivores real hunting prowess
+  const DIET_SHARP = 1.0;   // 1 = linear plant/meat tradeoff, no fitness valley
+  const FLEE_RANGE_FRAC = 0.35; // prey bolt only when a predator is within this
+                                // fraction of their sense range (closer = fairer hunts)
+  function plantEff(diet)  { return Math.pow(1 - diet, DIET_SHARP); }
+  function meatEff(diet)   { return Math.pow(diet, DIET_SHARP); }
+  function huntAttack(c)   { return attackPower(c) * (0.65 + 0.55 * c.genome.diet); }
+
   // ---------- creature ----------
-  function makeCreature(x, y, genome, generation) {
+  function makeCreature(x, y, genome, generation, sizeFrac) {
     const g = genome || randomGenome();
+    const size = g.size * (sizeFrac != null ? sizeFrac : BIRTH_SIZE_FRAC);
     return {
       x, y,
       dir: rand(0, Math.PI * 2),
       genome: g,
-      energy: 55 + g.size * 4,
+      size,                       // current body size, grows toward g.size (adult)
+      energy: 52 + size * 6,      // parental endowment — a buffer to reach adulthood
       age: 0,
       gen: generation || 0,
       birthFlash: 12,
@@ -269,10 +367,18 @@
   function metabolicCost(c) {
     const g = c.genome;
     // bigger, faster, keener creatures burn more just existing + moving.
-    // size cost is quadratic so mass is a real liability when food is scarce —
-    // this is what stops everything evolving into identical giant blobs and
-    // keeps a body-size spread alive (which carnivores need to find prey).
-    return 0.03 + g.size * g.size * 0.0055 + g.speed * g.speed * 0.06 + g.sense * 0.0011;
+    // size cost is quadratic (uses CURRENT size) so mass is a real liability
+    // when food is scarce — this keeps a body-size spread alive (which
+    // carnivores need to find prey) and makes juveniles cheap to run.
+    // weapons and armor are metabolically expensive to carry, so no organism
+    // can max everything — this forces trade-offs between offense, defense,
+    // speed, senses and body size.
+    const base = 0.03 + c.size * c.size * 0.0055 + g.speed * g.speed * 0.06 +
+                 g.sense * 0.0011 + g.attack * 0.05 + g.defense * 0.045;
+    // small "generalist tax": a specialised herbivore or carnivore runs slightly
+    // leaner than a middling omnivore maintaining both grazing and hunting kit.
+    const specialization = Math.abs(g.diet - 0.5) * 2; // 0 at omnivore, 1 at extremes
+    return base * (1 - 0.03 * specialization);
   }
   function reproThreshold(c) { return 90 + c.genome.size * 9; }
   function maxAge(c)         { return 900 + c.genome.size * 90; }
@@ -281,10 +387,12 @@
   function seed() {
     creatures = [];
     food = [];
-    tick = 0; maxGen = 0; foodAccum = 0;
+    tick = 0; maxGen = 0; recordAge = 0; foodAccum = 0;
+    deaths.starved = 0; deaths.oldAge = 0; deaths.eaten = 0;
     for (const k in hist) hist[k] = [];
     for (let i = 0; i < START_POP; i++) {
-      creatures.push(makeCreature(rand(40, W - 40), rand(40, H - 40)));
+      // founders start as full-grown adults (sizeFrac = 1)
+      creatures.push(makeCreature(rand(40, W - 40), rand(40, H - 40), null, 0, 1));
     }
     for (let i = 0; i < MAX_FOOD * 0.5; i++) spawnFood();
   }
@@ -305,6 +413,20 @@
     foodAccum += FOOD_SPAWN;
     while (foodAccum >= 1) { spawnFood(); foodAccum -= 1; }
 
+    // Immigration: now and then a fresh organism wanders in with a random diet.
+    // A single diet mutation can't jump a grazer across the "can't hunt yet"
+    // gap, so without new arrivals carnivores could never re-evolve once lost —
+    // this keeps every niche perpetually seeded and the ecosystem dynamic.
+    if (tick % IMMIGRATE_EVERY === 0 && creatures.length < MAX_POP) {
+      const gm = randomGenome();
+      gm.diet = Math.random();            // uniform, so hunters keep reappearing
+      // enter from a random edge, as if wandering in from beyond the world
+      const edge = Math.floor(Math.random() * 4);
+      const ix = edge === 0 ? 6 : edge === 1 ? W - 6 : rand(6, W - 6);
+      const iy = edge === 2 ? 6 : edge === 3 ? H - 6 : rand(6, H - 6);
+      creatures.push(makeCreature(ix, iy, gm, 0, 1));
+    }
+
     const born = [];
 
     for (let i = 0; i < creatures.length; i++) {
@@ -312,8 +434,11 @@
       const g = c.genome;
       const senseR2 = g.sense * g.sense;
 
-      // --- perception: pick a target ---
+      // --- perception: find food, prey and threats in one pass ---
       let target = null, targetIsPrey = false, bestD2 = senseR2;
+      let threat = null, threatD2 = senseR2;
+      const myAtk = huntAttack(c);      // offensive power when hunting (diet-boosted)
+      const myDef = defensePower(c);
 
       // herbivorous drive -> nearest food
       if (g.diet < 0.85) {
@@ -322,25 +447,36 @@
           if (d2 < bestD2) { bestD2 = d2; target = food[f]; targetIsPrey = false; }
         }
       }
-      // carnivorous drive -> nearest smaller creature (overrides food if diet is high)
-      if (g.diet > 0.35) {
-        let bestPrey2 = senseR2;
-        for (let j = 0; j < creatures.length; j++) {
-          if (j === i) continue;
-          const o = creatures[j];
-          if (o.genome.size >= g.size * 0.98) continue; // can only chase prey smaller than itself
-          const d2 = dist2(c.x, c.y, o.x, o.y);
-          if (d2 < bestPrey2) { bestPrey2 = d2; }
-          // weight prey by diet: stronger carnivores prefer meat even if food is closer
-          const weighted = d2 * (1.2 - g.diet);
-          if (weighted < bestD2 || (target === null && d2 < senseR2)) {
-            if (d2 < senseR2) { bestD2 = weighted; target = o; targetIsPrey = true; }
-          }
+
+      // single scan of other creatures: pick huntable prey AND spot predators
+      for (let j = 0; j < creatures.length; j++) {
+        if (j === i) continue;
+        const o = creatures[j];
+        const d2 = dist2(c.x, c.y, o.x, o.y);
+        if (d2 >= senseR2) continue;
+
+        // threat: a nearby hunter whose attack would likely overpower my defense.
+        // Prey only bolt at close range (not their whole sense radius), so hunters
+        // can still close in — otherwise carnivores could never catch anything.
+        if (o.genome.diet > 0.35 && d2 < senseR2 * FLEE_RANGE_FRAC &&
+            huntAttack(o) > myDef * 1.1 && d2 < threatD2) {
+          threatD2 = d2; threat = o;
+        }
+        // prey: a creature I can hunt with decent odds (my attack vs its defense)
+        if (g.diet > 0.35 && myAtk > defensePower(o) * 0.85) {
+          const weighted = d2 * (1.2 - g.diet); // stronger carnivores prefer meat
+          if (weighted < bestD2) { bestD2 = weighted; target = o; targetIsPrey = true; }
         }
       }
 
-      // --- steering ---
-      if (target) {
+      // --- steering: flee a predator first, else pursue target, else wander ---
+      if (threat) {
+        const away = Math.atan2(c.y - threat.y, c.x - threat.x);
+        let da = away - c.dir;
+        while (da >  Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        c.dir += clamp(da, -0.45, 0.45); // panic turns sharper
+      } else if (target) {
         const desired = Math.atan2(target.y - c.y, target.x - c.x);
         let da = desired - c.dir;
         while (da >  Math.PI) da -= Math.PI * 2;
@@ -350,8 +486,8 @@
         c.dir += rand(-0.3, 0.3); // wander
       }
 
-      // --- movement ---
-      const sp = g.speed;
+      // --- movement (dedicated carnivores get a burst of pursuit speed) ---
+      const sp = g.speed * (targetIsPrey && !threat ? 1 + 0.35 * g.diet : 1);
       c.x += Math.cos(c.dir) * sp;
       c.y += Math.sin(c.dir) * sp;
 
@@ -361,32 +497,51 @@
       if (c.y < 4)      { c.y = 4;      c.dir = -c.dir; }
       if (c.y > H - 4)  { c.y = H - 4;  c.dir = -c.dir; }
 
+      // --- growth: grow toward adult size, paying energy for new tissue ---
+      if (c.size < g.size) {
+        const gain = (g.size - c.size) * GROWTH_RATE;
+        c.size += gain;
+        c.energy -= gain * GROWTH_COST;
+      }
+
       // --- energy drain ---
       c.energy -= metabolicCost(c);
       c.age++;
+      if (c.age > recordAge) recordAge = c.age;
       if (c.birthFlash > 0) c.birthFlash--;
 
       // --- eating ---
       // plants (any diet can graze, but carnivores digest them poorly)
-      const eatR = g.size + 5;
+      const eatR = c.size + 5;
       for (let f = food.length - 1; f >= 0; f--) {
         if (dist2(c.x, c.y, food[f].x, food[f].y) < eatR * eatR) {
-          c.energy += FOOD_ENERGY * (1 - g.diet * 0.7);
+          c.energy += FOOD_ENERGY * plantEff(g.diet);
           food.splice(f, 1);
           break; // one bite per tick
         }
       }
-      // prey (carnivorous)
+      // prey (carnivorous): resolve the attack as a contest of powers
       if (targetIsPrey && target && target.energy > 0) {
-        const pr = g.size + target.genome.size;
+        const pr = c.size + target.size;
         if (dist2(c.x, c.y, target.x, target.y) < pr * pr * 0.5) {
-          c.energy += 24 + target.energy * 0.6;
-          target.energy = -1; // mark dead
+          const ap = myAtk, dp = defensePower(target);
+          if (Math.random() < ap / (ap + dp)) {
+            // carnivores digest meat far better than dabbling omnivores
+            c.energy += (36 + target.energy * 0.8) * meatEff(g.diet);
+            target.energy = -1;   // mark dead
+            target.eaten = true;  // cause of death: predation
+          } else {
+            // the attack is repelled: attacker tires, prey is wounded
+            c.energy -= 2;
+            target.energy -= 4;
+          }
         }
       }
 
-      // --- reproduction ---
-      if (c.energy >= reproThreshold(c) && creatures.length + born.length < MAX_POP) {
+      // --- reproduction (only once grown to maturity) ---
+      if (c.size >= g.size * MATURITY_FRAC &&
+          c.energy >= reproThreshold(c) &&
+          creatures.length + born.length < MAX_POP) {
         c.energy *= 0.5;
         const childGen = c.gen + 1;
         if (childGen > maxGen) maxGen = childGen;
@@ -404,6 +559,10 @@
     for (let i = creatures.length - 1; i >= 0; i--) {
       const c = creatures[i];
       if (c.energy <= 0 || c.age > maxAge(c)) {
+        // tally cause of death (predation takes precedence over starvation)
+        if (c.eaten)                 deaths.eaten++;
+        else if (c.age > maxAge(c))  deaths.oldAge++;
+        else                         deaths.starved++;
         // dead bodies fertilise a little food where they fall
         if (Math.random() < 0.55) spawnFood(c.x, c.y);
         creatures.splice(i, 1);
@@ -439,10 +598,11 @@
   function push(arr, v) { arr.push(v); if (arr.length > HISTORY_LEN) arr.shift(); }
 
   function updateStats() {
-    let herb = 0, carn = 0, sp = 0, sz = 0, se = 0;
+    let herb = 0, carn = 0, sp = 0, sz = 0, se = 0, at = 0, df = 0;
     for (const c of creatures) {
       if (c.genome.diet >= 0.5) carn++; else herb++;
       sp += c.genome.speed; sz += c.genome.size; se += c.genome.sense;
+      at += c.genome.attack; df += c.genome.defense;
     }
     const n = creatures.length || 1;
     setText('s-tick',  tick.toLocaleString());
@@ -454,6 +614,12 @@
     setText('s-speed', (sp / n).toFixed(2));
     setText('s-size',  (sz / n).toFixed(1));
     setText('s-sense', Math.round(se / n));
+    setText('s-attack',  (at / n).toFixed(2));
+    setText('s-defense', (df / n).toFixed(2));
+    setText('s-oldest',  recordAge.toLocaleString());
+    setText('s-starved', deaths.starved.toLocaleString());
+    setText('s-oldage',  deaths.oldAge.toLocaleString());
+    setText('s-eaten',   deaths.eaten.toLocaleString());
   }
   function setText(id, v) { document.getElementById(id).textContent = v; }
 
@@ -480,18 +646,28 @@
       const light = starving ? 32 : 55;
       const alpha = starving ? 0.55 : 1;
 
-      // body
+      // body (current size — visibly grows as the creature matures)
       ctx.beginPath();
       ctx.fillStyle = `hsla(${hue}, 70%, ${light}%, ${alpha})`;
-      ctx.arc(c.x, c.y, g.size, 0, Math.PI * 2);
+      ctx.arc(c.x, c.y, c.size, 0, Math.PI * 2);
       ctx.fill();
 
-      // heading nub (eye) so you can see where it's going
+      // armor outline — thickness grows with the defense gene
+      if (g.defense > 0.6) {
+        ctx.beginPath();
+        ctx.strokeStyle = `hsla(${hue}, 25%, 90%, ${alpha * 0.85})`;
+        ctx.lineWidth = clamp((g.defense - 0.5) * 1.4, 0.6, 3.4);
+        ctx.arc(c.x, c.y, c.size - ctx.lineWidth * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // heading "fang" nub — shows direction; larger = stronger attack
+      const fang = Math.max(1.4, c.size * (0.20 + g.attack * 0.07));
       ctx.beginPath();
       ctx.fillStyle = `hsla(${hue}, 90%, 82%, ${alpha})`;
-      ctx.arc(c.x + Math.cos(c.dir) * g.size * 0.6,
-              c.y + Math.sin(c.dir) * g.size * 0.6,
-              Math.max(1.4, g.size * 0.28), 0, Math.PI * 2);
+      ctx.arc(c.x + Math.cos(c.dir) * c.size * 0.6,
+              c.y + Math.sin(c.dir) * c.size * 0.6,
+              fang, 0, Math.PI * 2);
       ctx.fill();
 
       // birth flash ring
@@ -499,7 +675,7 @@
         ctx.beginPath();
         ctx.strokeStyle = `hsla(${hue}, 90%, 75%, ${c.birthFlash / 12})`;
         ctx.lineWidth = 2;
-        ctx.arc(c.x, c.y, g.size + 6 - c.birthFlash * 0.3, 0, Math.PI * 2);
+        ctx.arc(c.x, c.y, c.size + 6 - c.birthFlash * 0.3, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
