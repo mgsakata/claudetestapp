@@ -252,10 +252,10 @@
   const W = 1000, H = 600;
   const START_POP     = 60;
   const MAX_POP       = 380;    // hard cap to keep the browser happy
-  const MAX_FOOD      = 320;
+  const MAX_FOOD      = 420;
   const FOOD_ENERGY   = 30;
-  const FOOD_SPAWN    = 1.3;    // food pellets spawned per tick (fractional accumulates)
-  const IMMIGRATE_EVERY = 170;  // a random-diet immigrant arrives this often (ticks)
+  const FOOD_SPAWN    = 2.0;    // food pellets spawned per tick (fractional accumulates)
+  const IMMIGRATE_EVERY = 120;  // a random-diet immigrant arrives this often (ticks)
   const HISTORY_LEN   = 240;    // samples kept for the charts
 
   // gene bounds
@@ -341,7 +341,7 @@
   //  - plantEff peaks at diet 0 (best plant digestion for herbivores)
   //  - meatEff  peaks at diet 1 (best meat digestion for carnivores)
   //  - huntAttack gives dedicated carnivores real hunting prowess
-  const DIET_SHARP = 1.0;   // 1 = linear plant/meat tradeoff, no fitness valley
+  const DIET_SHARP = 1.15;  // >1 gives specialists an edge, curbing omnivore dominance
   const FLEE_RANGE_FRAC = 0.35; // prey bolt only when a predator is within this
                                 // fraction of their sense range (closer = fairer hunts)
   function plantEff(diet)  { return Math.pow(1 - diet, DIET_SHARP); }
@@ -378,7 +378,7 @@
     // small "generalist tax": a specialised herbivore or carnivore runs slightly
     // leaner than a middling omnivore maintaining both grazing and hunting kit.
     const specialization = Math.abs(g.diet - 0.5) * 2; // 0 at omnivore, 1 at extremes
-    return base * (1 - 0.03 * specialization);
+    return base * (1 - 0.05 * specialization);
   }
   function reproThreshold(c) { return 90 + c.genome.size * 9; }
   function maxAge(c)         { return 900 + c.genome.size * 90; }
@@ -433,6 +433,14 @@
       const c = creatures[i];
       const g = c.genome;
       const senseR2 = g.sense * g.sense;
+      // dedicated hunters spot prey from farther away than they sense food/threats
+      const preySenseR2 = senseR2 * (1 + g.diet * 0.8);
+      const scanR2 = preySenseR2 > senseR2 ? preySenseR2 : senseR2;
+      // Ontogenetic diet shift: the young of any diet behave like omnivores and
+      // graze to survive, only specializing into hunting as they grow up. This
+      // lets carnivore pups reach hunting age instead of starving as juveniles.
+      const mat = c.size / g.size;      // 0.35 (newborn) .. 1 (adult)
+      const effDiet = g.diet * mat;
 
       // --- perception: find food, prey and threats in one pass ---
       let target = null, targetIsPrey = false, bestD2 = senseR2;
@@ -441,7 +449,7 @@
       const myDef = defensePower(c);
 
       // herbivorous drive -> nearest food
-      if (g.diet < 0.85) {
+      if (effDiet < 0.85) {
         for (let f = 0; f < food.length; f++) {
           const d2 = dist2(c.x, c.y, food[f].x, food[f].y);
           if (d2 < bestD2) { bestD2 = d2; target = food[f]; targetIsPrey = false; }
@@ -453,7 +461,7 @@
         if (j === i) continue;
         const o = creatures[j];
         const d2 = dist2(c.x, c.y, o.x, o.y);
-        if (d2 >= senseR2) continue;
+        if (d2 >= scanR2) continue;
 
         // threat: a nearby hunter whose attack would likely overpower my defense.
         // Prey only bolt at close range (not their whole sense radius), so hunters
@@ -463,7 +471,7 @@
           threatD2 = d2; threat = o;
         }
         // prey: a creature I can hunt with decent odds (my attack vs its defense)
-        if (g.diet > 0.35 && myAtk > defensePower(o) * 0.85) {
+        if (effDiet > 0.35 && d2 < preySenseR2 && myAtk > defensePower(o) * 0.85) {
           const weighted = d2 * (1.2 - g.diet); // stronger carnivores prefer meat
           if (weighted < bestD2) { bestD2 = weighted; target = o; targetIsPrey = true; }
         }
@@ -487,7 +495,7 @@
       }
 
       // --- movement (dedicated carnivores get a burst of pursuit speed) ---
-      const sp = g.speed * (targetIsPrey && !threat ? 1 + 0.35 * g.diet : 1);
+      const sp = g.speed * (targetIsPrey && !threat ? 1 + 0.5 * g.diet : 1);
       c.x += Math.cos(c.dir) * sp;
       c.y += Math.sin(c.dir) * sp;
 
@@ -515,7 +523,7 @@
       const eatR = c.size + 5;
       for (let f = food.length - 1; f >= 0; f--) {
         if (dist2(c.x, c.y, food[f].x, food[f].y) < eatR * eatR) {
-          c.energy += FOOD_ENERGY * plantEff(g.diet);
+          c.energy += FOOD_ENERGY * plantEff(effDiet);
           food.splice(f, 1);
           break; // one bite per tick
         }
