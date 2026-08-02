@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Biosphere — Claude Test Site{% endblock %}
+{% block version %}Biosphere v1.6{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -255,7 +256,9 @@
   const MAX_FOOD      = 420;
   const FOOD_ENERGY   = 30;
   const FOOD_SPAWN    = 2.0;    // food pellets spawned per tick (fractional accumulates)
-  const IMMIGRATE_EVERY = 120;  // a random-diet immigrant arrives this often (ticks)
+  const IMMIGRATE_EVERY = 80;   // a rarest-diet immigrant arrives this often (ticks)
+  const DIET_CROWDING   = 15;   // how hard an over-represented diet type is to breed
+                                // (higher = more forcefully balanced diet mix)
   const HISTORY_LEN   = 240;    // samples kept for the charts
 
   // gene bounds
@@ -341,7 +344,7 @@
   //  - plantEff peaks at diet 0 (best plant digestion for herbivores)
   //  - meatEff  peaks at diet 1 (best meat digestion for carnivores)
   //  - huntAttack gives dedicated carnivores real hunting prowess
-  const DIET_SHARP = 1.15;  // >1 gives specialists an edge, curbing omnivore dominance
+  const DIET_SHARP = 1.0;   // 1 = neutral linear plant/meat tradeoff (no diet is penalized)
   const FLEE_RANGE_FRAC = 0.35; // prey bolt only when a predator is within this
                                 // fraction of their sense range (closer = fairer hunts)
   function plantEff(diet)  { return Math.pow(1 - diet, DIET_SHARP); }
@@ -375,10 +378,7 @@
     // speed, senses and body size.
     const base = 0.03 + c.size * c.size * 0.0055 + g.speed * g.speed * 0.06 +
                  g.sense * 0.0011 + g.attack * 0.05 + g.defense * 0.045;
-    // small "generalist tax": a specialised herbivore or carnivore runs slightly
-    // leaner than a middling omnivore maintaining both grazing and hunting kit.
-    const specialization = Math.abs(g.diet - 0.5) * 2; // 0 at omnivore, 1 at extremes
-    return base * (1 - 0.05 * specialization);
+    return base;
   }
   function reproThreshold(c) { return 90 + c.genome.size * 9; }
   function maxAge(c)         { return 900 + c.genome.size * 90; }
@@ -413,13 +413,25 @@
     foodAccum += FOOD_SPAWN;
     while (foodAccum >= 1) { spawnFood(); foodAccum -= 1; }
 
-    // Immigration: now and then a fresh organism wanders in with a random diet.
-    // A single diet mutation can't jump a grazer across the "can't hunt yet"
-    // gap, so without new arrivals carnivores could never re-evolve once lost —
-    // this keeps every niche perpetually seeded and the ecosystem dynamic.
+    // Diet-band census (herbivore / omnivore / carnivore) — used both to steer
+    // immigration and to apply anti-dominance "niche crowding" to reproduction.
+    let nH = 0, nO = 0, nC = 0;
+    for (let k = 0; k < creatures.length; k++) {
+      const dv = creatures[k].genome.diet;
+      if (dv < 0.33) nH++; else if (dv > 0.66) nC++; else nO++;
+    }
+    const popN = creatures.length || 1;
+
+    // Immigration: now and then a fresh organism wanders in — always of whichever
+    // diet type is currently rarest, so herbivores, omnivores and carnivores are
+    // all kept seeded and none is ever emptied out.
     if (tick % IMMIGRATE_EVERY === 0 && creatures.length < MAX_POP) {
+      let lo, hi;
+      if (nH <= nO && nH <= nC)      { lo = 0.00; hi = 0.30; } // herbivore rarest
+      else if (nC <= nH && nC <= nO) { lo = 0.70; hi = 1.00; } // carnivore rarest
+      else                           { lo = 0.35; hi = 0.65; } // omnivore rarest
       const gm = randomGenome();
-      gm.diet = Math.random();            // uniform, so hunters keep reappearing
+      gm.diet = rand(lo, hi);
       // enter from a random edge, as if wandering in from beyond the world
       const edge = Math.floor(Math.random() * 4);
       const ix = edge === 0 ? 6 : edge === 1 ? W - 6 : rand(6, W - 6);
@@ -547,8 +559,13 @@
       }
 
       // --- reproduction (only once grown to maturity) ---
+      // Niche crowding: an over-represented diet type must gather much more energy
+      // to breed, which caps any single strategy and keeps herbivores, omnivores
+      // and carnivores all present in a healthy range rather than one taking over.
+      const myBand = g.diet < 0.33 ? nH : g.diet > 0.66 ? nC : nO;
+      const crowd = 1 + Math.max(0, myBand / popN - 0.34) * DIET_CROWDING;
       if (c.size >= g.size * MATURITY_FRAC &&
-          c.energy >= reproThreshold(c) &&
+          c.energy >= reproThreshold(c) * crowd &&
           creatures.length + born.length < MAX_POP) {
         c.energy *= 0.5;
         const childGen = c.gen + 1;

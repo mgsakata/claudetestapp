@@ -31,6 +31,14 @@
 
   {% block content %}{% endblock %}
 
+  <!-- Version badge: confirms which build of a sub-app page is actually live -->
+  <div style="position:fixed; bottom:8px; right:10px; z-index:50;
+              font-family:monospace; font-size:0.7rem; color:#8a95a5;
+              background:rgba(0,0,0,0.35); padding:2px 8px; border-radius:6px;
+              pointer-events:none;">
+    {% block version %}v1.0{% endblock %}
+  </div>
+
   <script>
     // Bulma burger toggle
     document.addEventListener('DOMContentLoaded', () => {
