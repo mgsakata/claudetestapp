@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Biosphere — Claude Test Site{% endblock %}
-{% block version %}Biosphere v1.6{% endblock %}
+{% block version %}Biosphere v1.7{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -253,12 +253,18 @@
   const W = 1000, H = 600;
   const START_POP     = 60;
   const MAX_POP       = 380;    // hard cap to keep the browser happy
-  const MAX_FOOD      = 420;
+  const MAX_FOOD      = 360;
   const FOOD_ENERGY   = 30;
-  const FOOD_SPAWN    = 2.0;    // food pellets spawned per tick (fractional accumulates)
-  const IMMIGRATE_EVERY = 80;   // a rarest-diet immigrant arrives this often (ticks)
-  const DIET_CROWDING   = 15;   // how hard an over-represented diet type is to breed
-                                // (higher = more forcefully balanced diet mix)
+  const FOOD_SPAWN    = 1.6;    // food pellets spawned per tick (fractional accumulates).
+                                // Kept scarce enough that grazers overgraze and crash,
+                                // driving boom-and-bust population cycles.
+  const IMMIGRATE_EVERY = 50;   // a rarest-diet immigrant arrives this often (ticks).
+                                // Frequent enough to let a crashed diet rebound and
+                                // surge back into the gap when another type collapses.
+  const DIET_CROWDING   = 20;   // how hard an over-represented diet type is to breed.
+                                // Lifts the trailing diets toward parity so that when
+                                // the leader crashes, another type can overtake it —
+                                // this is what produces surge-and-fall lead turnover.
   const HISTORY_LEN   = 240;    // samples kept for the charts
 
   // gene bounds
