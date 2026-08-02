@@ -34,7 +34,7 @@ python manage.py startapp <app_name>
 
 ## Architecture
 
-This is a Django 6.0.4 project using a **config-as-package** layout: the Django project package is named `config/` (rather than the app name), containing `settings.py`, `urls.py`, `wsgi.py`, and `asgi.py`. The root `manage.py` points to `config.settings`.
+This is a Django 6.0.7 project using a **config-as-package** layout: the Django project package is named `config/` (rather than the app name), containing `settings.py`, `urls.py`, `wsgi.py`, and `asgi.py`. The root `manage.py` points to `config.settings`.
 
 **Environment configuration** is handled by `python-decouple`, which reads from `.env` in the project root. Required variables: `SECRET_KEY`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`.
 
