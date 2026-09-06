@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Dog Slideshow — Claude Test Site{% endblock %}
-{% block version %}Dogs v1.0{% endblock %}
+{% block version %}Dogs v1.1{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -112,7 +112,7 @@
     <h1 class="title is-2 mb-2">Dog Slideshow</h1>
     <p class="subtitle is-6 mb-6">
       Photos from <a href="https://commons.wikimedia.org" target="_blank" rel="noopener">Wikimedia Commons</a>
-      under Creative Commons licences
+      under Creative Commons licences &middot; every image individually reviewed
     </p>
 
     <div class="slideshow-wrap">
@@ -137,23 +137,17 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ vetted_titles|json_script:"vetted-titles" }}
 <script>
-const PHOTO_COUNT  = 30;
+const PHOTO_COUNT   = 30;
 const AUTO_INTERVAL = 3500;
-// Wikimedia Commons: quality images of dogs, shuffled via rngseed
-const API = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
-  action:   'query',
-  generator:'categorymembers',
-  gcmtitle: 'Category:Quality_images_of_dogs',
-  gcmtype:  'file',
-  gcmlimit: '30',
-  gcmdir:   'desc',
-  prop:     'imageinfo',
-  iiprop:   'url|extmetadata',
-  iiurlwidth:'800',
-  format:   'json',
-  origin:   '*',
-});
+
+// Titles are a PINNED, MANUALLY REVIEWED list (see dogs/vetted_dogs.json).
+// Do not swap this back to a live category query: "Quality images of dogs" is a
+// technical rating, not a content rating, and contains dead and injured animals.
+const VETTED = JSON.parse(document.getElementById('vetted-titles').textContent);
+
+const API = 'https://commons.wikimedia.org/w/api.php';
 
 const frame     = document.getElementById('frame');
 const dotsEl    = document.getElementById('dots');
@@ -167,8 +161,15 @@ let slides    = [];
 let current   = 0;
 let autoTimer = null;
 let isPlaying = true;
-// rotate through category pages so "New set" gives different photos
-let gcmcontinue = null;
+
+function sample(list, n) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
 
 function showSlide(idx) {
   slides[current].el.classList.remove('active');
@@ -198,10 +199,14 @@ function buildSlides(photos) {
     // attribution caption (required by CC licences)
     const cap = document.createElement('div');
     cap.className = 'caption';
-    cap.innerHTML =
-      `<a href="${photo.pageUrl}" target="_blank" rel="noopener">${photo.title}</a>` +
-      (photo.author  ? ` &middot; ${photo.author}`  : '') +
-      (photo.license ? ` &middot; ${photo.license}` : '');
+    const link = document.createElement('a');
+    link.href = photo.pageUrl;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = photo.title;
+    cap.appendChild(link);
+    if (photo.author)  cap.appendChild(document.createTextNode(' \u00b7 ' + photo.author));
+    if (photo.license) cap.appendChild(document.createTextNode(' \u00b7 ' + photo.license));
     div.appendChild(cap);
 
     frame.appendChild(div);
@@ -220,41 +225,44 @@ function buildSlides(photos) {
 
 async function fetchDogs() {
   const loadingSlide = document.getElementById('loading-slide');
-  if (loadingSlide) loadingSlide.style.opacity = '1';
+  const picked = sample(VETTED, PHOTO_COUNT);
+  const approved = new Set(picked);
 
-  // randomise page offset so New set rotates results
-  const url = gcmcontinue
-    ? API + '&gcmcontinue=' + encodeURIComponent(gcmcontinue)
-    : API + '&gcmstartsortkeyprefix=' + String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  const url = API + '?' + new URLSearchParams({
+    action: 'query',
+    titles: picked.join('|'),
+    prop:   'imageinfo',
+    iiprop: 'url|extmetadata',
+    iiurlwidth: '800',
+    format: 'json',
+    origin: '*',
+  });
 
   try {
     const res  = await fetch(url);
     const data = await res.json();
-    gcmcontinue = data.continue?.gcmcontinue ?? null;
 
-    const pages = Object.values(data.query?.pages ?? {});
-    const photos = pages
-      .filter(p => p.imageinfo?.[0]?.thumburl)
+    const photos = Object.values(data.query?.pages ?? {})
+      // never render anything the API hands back that is not on the vetted list
+      .filter(p => approved.has(p.title) && p.imageinfo?.[0]?.thumburl)
       .map(p => {
         const ii   = p.imageinfo[0];
         const meta = ii.extmetadata || {};
         const rawAuthor = meta.Artist?.value || '';
-        // strip HTML tags from author field
         const author = rawAuthor.replace(/<[^>]+>/g, '').trim().slice(0, 60);
-        const license = meta.LicenseShortName?.value || '';
         return {
           title:    p.title.replace('File:', '').replace(/\.[^.]+$/, ''),
           thumbUrl: ii.thumburl,
           pageUrl:  ii.descriptionurl || ii.url,
           author,
-          license,
+          license:  meta.LicenseShortName?.value || '',
         };
       });
 
     if (loadingSlide) loadingSlide.remove();
 
     if (photos.length === 0) {
-      frame.innerHTML = '<div class="slide active"><span class="slide-loading">No photos found — try refreshing.</span></div>';
+      frame.innerHTML = '<div class="slide active"><span class="slide-loading">No photos found \u2014 try refreshing.</span></div>';
       return;
     }
 
@@ -280,19 +288,19 @@ btnNext.addEventListener('click', () => { showSlide(current + 1); resetAuto(); }
 
 btnAuto.addEventListener('click', () => {
   isPlaying = !isPlaying;
-  btnAuto.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+  btnAuto.textContent = isPlaying ? '\u23f8 Pause' : '\u25b6 Play';
   resetAuto();
 });
 
 btnRefresh.addEventListener('click', () => {
   clearInterval(autoTimer);
   isPlaying = true;
-  btnAuto.textContent = '⏸ Pause';
+  btnAuto.textContent = '\u23f8 Pause';
 
   const loading = document.createElement('div');
   loading.id = 'loading-slide';
   loading.className = 'slide active';
-  loading.innerHTML = '<span class="slide-loading">Fetching good boys…</span>';
+  loading.innerHTML = '<span class="slide-loading">Fetching good boys\u2026</span>';
   frame.appendChild(loading);
 
   fetchDogs();
